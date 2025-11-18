@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const cron = require('node-cron');
 const { connectDatabase } = require('./config/database');
 const { verifyEmailConfig } = require('./config/email');
@@ -10,6 +11,24 @@ const logger = require('./services/logger');
 // Iniciar servidor HTTP para Heroku
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Middlewares
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Logger de requisições
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.path}`);
+  next();
+});
+
+// Importar rotas da API
+const lotesRoutes = require('./api/routes/lotes');
+const estatisticasRoutes = require('./api/routes/estatisticas');
+
+app.use('/api/lotes', lotesRoutes);
+app.use('/api/estatisticas', estatisticasRoutes);
 
 // Variável para controlar se já está processando
 let isProcessing = false;
@@ -162,8 +181,36 @@ app.get('/', (req, res) => {
     nome: 'ProjLuz v2.0 - Processamento Automático',
     versao: '2.0.0',
     status: isProcessing ? 'processando' : 'aguardando',
-    cronSchedule: process.env.CRON_SCHEDULE || '0 */6 * * *'
+    cronSchedule: process.env.CRON_SCHEDULE || '0 */6 * * *',
+    endpoints: {
+      lotes: '/api/lotes',
+      estatisticas: '/api/estatisticas',
+      health: '/health'
+    },
+    documentacao: {
+      listarLotes: 'GET /api/lotes?status=pendente&page=1&limit=20',
+      detalhesLote: 'GET /api/lotes/:nome',
+      exportarCSV: 'GET /api/lotes/:nome/export',
+      listarFotos: 'GET /api/lotes/:nome/fotos?status=sucesso&page=1&limit=50',
+      processarLote: 'POST /api/lotes/:nome/processar',
+      statusLote: 'GET /api/lotes/:nome/status',
+      estatisticas: 'GET /api/estatisticas'
+    }
   });
+});
+
+// Error handler
+app.use((err, req, res, next) => {
+  logger.error('Erro na requisição:', err);
+  res.status(err.status || 500).json({
+    erro: err.message || 'Erro interno do servidor',
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ erro: 'Endpoint não encontrado' });
 });
 
 // Iniciar servidor HTTP
