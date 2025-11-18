@@ -1,6 +1,6 @@
 const Lote = require('../../models/Lote');
 const Foto = require('../../models/Foto');
-const { createResultCsv } = require('../../services/csvService');
+const { arrayToCsvString } = require('../../services/csvService');
 const logger = require('../../services/logger');
 
 class LoteController {
@@ -70,14 +70,14 @@ class LoteController {
       
       // Formatar dados para CSV
       const dados = fotos.map(foto => ({
-        id_prisma: foto.idPrisma,
+        id: foto.idPrisma,
         link_foto_plaqueta: foto.linkFotoOriginal,
         numero_encontrado: String(foto.numeroEncontrado || ''), // SEMPRE STRING para preservar zeros
         confidencialidade: foto.confidencialidade ? foto.confidencialidade.toFixed(2) : '',
-        status: foto.status
+        falhou: foto.status === 'falha' ? 'true' : 'false'
       }));
       
-      const csv = await createResultCsv(dados);
+      const csv = arrayToCsvString(dados);
       
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="resultado_${nome}.csv"`);
