@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+
+# Credentials
+credentials/*.json
+!credentials/.gitkeep
+
+# Logs
+logs/*.log
+!logs/.gitkeep
+
+# Temporary files
+temp/
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Downloaded images (temporary)
+downloads/
+*.jpg
+*.jpeg
+*.png
+!assets/*.jpg
+!assets/*.jpeg
+!assets/*.png
