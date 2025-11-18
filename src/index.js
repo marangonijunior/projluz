@@ -1,10 +1,15 @@
 require('dotenv').config();
+const express = require('express');
 const cron = require('node-cron');
 const { connectDatabase } = require('./config/database');
 const { verifyEmailConfig } = require('./config/email');
 const { importarTodosLotes } = require('./scripts/importLotes');
 const { processarLotesPendentes } = require('./controllers/loteProcessor');
 const logger = require('./services/logger');
+
+// Iniciar servidor HTTP para Heroku
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 // Variável para controlar se já está processando
 let isProcessing = false;
@@ -113,10 +118,12 @@ function startScheduler() {
   logger.info('✅ Scheduler ativo e aguardando próxima execução');
   logger.info('');
 
-  // Executar imediatamente ao iniciar
-  logger.info('� Executando primeiro ciclo imediatamente...');
+  // Executar primeiro ciclo em background após 10 segundos
+  logger.info('🚀 Primeiro ciclo será executado em 10 segundos...');
   logger.info('');
-  main();
+  setTimeout(() => {
+    main().catch(err => logger.error('Erro no primeiro ciclo:', err));
+  }, 10000);
 }
 
 /**
@@ -139,12 +146,36 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-// Iniciar aplicação
-logger.info('');
-logger.info('╔════════════════════════════════════════════════╗');
-logger.info('║    PROJLUZ v2.0 - PROCESSAMENTO AUTOMÁTICO    ║');
-logger.info('║        MongoDB + AWS + Drive + Email          ║');
-logger.info('╚════════════════════════════════════════════════╝');
-logger.info('');
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    isProcessing
+  });
+});
 
-startScheduler();
+// Status endpoint
+app.get('/', (req, res) => {
+  res.json({
+    nome: 'ProjLuz v2.0 - Processamento Automático',
+    versao: '2.0.0',
+    status: isProcessing ? 'processando' : 'aguardando',
+    cronSchedule: process.env.CRON_SCHEDULE || '0 */6 * * *'
+  });
+});
+
+// Iniciar servidor HTTP
+app.listen(PORT, () => {
+  logger.info('');
+  logger.info('╔════════════════════════════════════════════════╗');
+  logger.info('║    PROJLUZ v2.0 - PROCESSAMENTO AUTOMÁTICO    ║');
+  logger.info('║        MongoDB + AWS + Drive + Email          ║');
+  logger.info('╚════════════════════════════════════════════════╝');
+  logger.info('');
+  logger.info(`🌐 Servidor HTTP rodando na porta ${PORT}`);
+  
+  // Iniciar scheduler após servidor estar pronto
+  startScheduler();
+});
