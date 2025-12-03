@@ -5,6 +5,10 @@ const { extractNumberFromImage } = require('../services/rekognitionService');
 const { sendSummaryEmail } = require('../services/emailService');
 const logger = require('../services/logger');
 
+// ✅ Lock global para evitar execuções simultâneas do CRON
+let isProcessing = false;
+let currentExecutionStart = null;
+
 /**
  * Extrai file_id da URL do Google Drive
  */
@@ -203,9 +207,38 @@ async function processarLote(lote) {
 
 /**
  * Processa todos os lotes pendentes
+ * ⚠️ Com proteção contra execuções simultâneas
  */
 async function processarLotesPendentes() {
+  // ⚠️ VERIFICAR SE JÁ ESTÁ PROCESSANDO
+  if (isProcessing) {
+    const tempoDecorrido = Math.floor((Date.now() - currentExecutionStart) / 1000 / 60);
+    logger.warn('');
+    logger.warn('⚠️  ════════════════════════════════════════════════');
+    logger.warn('⚠️  PROCESSAMENTO JÁ EM ANDAMENTO');
+    logger.warn(`⚠️  Iniciado há ${tempoDecorrido} minuto(s)`);
+    logger.warn('⚠️  Pulando esta execução do CRON');
+    logger.warn('⚠️  ════════════════════════════════════════════════');
+    logger.warn('');
+    
+    return {
+      sucesso: false,
+      motivo: 'processamento_em_andamento',
+      tempoDecorrido: `${tempoDecorrido}min`,
+      lotesProcessados: 0,
+      totalFotos: 0,
+      fotosSucesso: 0,
+      fotosFalha: 0
+    };
+  }
+
   try {
+    // ✅ ATIVAR LOCK
+    isProcessing = true;
+    currentExecutionStart = Date.now();
+    
+    logger.info('🔒 Lock ativado - Processamento iniciado');
+    
     // Buscar lotes pendentes ou em processamento
     const lotesPendentes = await Lote.find({
       status: { $in: ['pendente', 'processando'] }
@@ -214,6 +247,7 @@ async function processarLotesPendentes() {
     if (lotesPendentes.length === 0) {
       logger.info('ℹ️  Nenhum lote pendente para processar');
       return {
+        sucesso: true,
         lotesProcessados: 0,
         totalFotos: 0,
         fotosSucesso: 0,
@@ -246,16 +280,38 @@ async function processarLotesPendentes() {
       }
     }
 
+    const tempoTotalMin = Math.floor((Date.now() - currentExecutionStart) / 1000 / 60);
+    logger.info('');
+    logger.info('════════════════════════════════════════════════');
+    logger.info('✅ TODOS OS LOTES PROCESSADOS');
+    logger.info('════════════════════════════════════════════════');
+    logger.info(`📦 Lotes: ${lotesProcessados}`);
+    logger.info(`✅ Sucesso: ${totalSucesso}`);
+    logger.info(`❌ Falhas: ${totalFalha}`);
+    logger.info(`⏱️  Tempo total: ${tempoTotalMin} minuto(s)`);
+    logger.info('════════════════════════════════════════════════');
+    logger.info('');
+
     return {
+      sucesso: true,
       lotesProcessados,
       totalFotos,
       fotosSucesso: totalSucesso,
-      fotosFalha: totalFalha
+      fotosFalha: totalFalha,
+      tempoTotal: tempoTotalMin
     };
 
   } catch (error) {
     logger.error('Erro ao processar lotes pendentes:', error);
     throw error;
+  } finally {
+    // ✅ SEMPRE LIBERAR LOCK (mesmo com erro)
+    const tempoTotal = Math.floor((Date.now() - (currentExecutionStart || Date.now())) / 1000 / 60);
+    isProcessing = false;
+    currentExecutionStart = null;
+    
+    logger.info(`🔓 Lock liberado após ${tempoTotal} minuto(s)`);
+    logger.info('');
   }
 }
 
