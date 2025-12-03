@@ -135,14 +135,9 @@ function startScheduler() {
   });
 
   logger.info('✅ Scheduler ativo e aguardando próxima execução');
+  logger.info('⏰ Próximas execuções: 00:00, 06:00, 12:00, 18:00');
+  logger.info('ℹ️  Não será executado imediatamente - apenas nos horários programados');
   logger.info('');
-
-  // Executar primeiro ciclo em background após 10 segundos
-  logger.info('🚀 Primeiro ciclo será executado em 10 segundos...');
-  logger.info('');
-  setTimeout(() => {
-    main().catch(err => logger.error('Erro no primeiro ciclo:', err));
-  }, 10000);
 }
 
 /**

@@ -10,6 +10,41 @@ let isProcessing = false;
 let currentExecutionStart = null;
 
 /**
+ * Resetar fotos travadas (status 'processando' há mais de 10 minutos)
+ * Isso acontece quando o servidor crashou no meio do processamento
+ */
+async function resetarFotosTravadas(loteId) {
+  const tempoLimite = new Date(Date.now() - 10 * 60 * 1000); // 10 minutos atrás
+  
+  const resultado = await Foto.updateMany(
+    {
+      loteId,
+      status: 'processando',
+      updatedAt: { $lt: tempoLimite }
+    },
+    {
+      $set: { 
+        status: 'pendente'
+      },
+      $push: {
+        observacoes: {
+          tipo: 'reset_travamento',
+          mensagem: 'Resetada após travamento (crash/timeout)',
+          timestamp: new Date()
+        }
+      }
+    }
+  );
+
+  if (resultado.modifiedCount > 0) {
+    logger.warn(`🔄 ${resultado.modifiedCount} foto(s) travada(s) resetada(s) para 'pendente'`);
+    logger.warn(`   → Essas fotos estavam com status 'processando' há mais de 10 minutos`);
+  }
+
+  return resultado.modifiedCount;
+}
+
+/**
  * Extrai file_id da URL do Google Drive
  */
 function extractFileId(url) {
@@ -101,6 +136,9 @@ async function processarLote(lote) {
     lote.status = 'processando';
     lote.dataInicio = new Date();
     await lote.save();
+
+    // 🔧 RESETAR FOTOS TRAVADAS (proteção contra crashes)
+    await resetarFotosTravadas(lote._id);
 
     // Processar TODAS as fotos pendentes em loop (10 por vez)
     let totalProcessadas = 0;
@@ -240,9 +278,15 @@ async function processarLotesPendentes() {
     logger.info('🔒 Lock ativado - Processamento iniciado');
     
     // Buscar lotes pendentes ou em processamento
+    // Se houver lote 'processando', finaliza ele primeiro antes de pegar novo
     const lotesPendentes = await Lote.find({
       status: { $in: ['pendente', 'processando'] }
-    }).sort({ dataCriacao: 1 });
+    })
+    .sort([
+      ['status', -1], // 'processando' vem antes de 'pendente'
+      ['dataCriacao', 1]
+    ])
+    .limit(1); // ← Processar apenas 1 lote por execução do CRON
 
     if (lotesPendentes.length === 0) {
       logger.info('ℹ️  Nenhum lote pendente para processar');
@@ -255,37 +299,48 @@ async function processarLotesPendentes() {
       };
     }
 
-    logger.info(`📋 ${lotesPendentes.length} lote(s) pendente(s) encontrado(s)`);
+    // Verificar quantos lotes restantes existem
+    const totalLotesPendentes = await Lote.countDocuments({
+      status: { $in: ['pendente', 'processando'] }
+    });
+
+    const lote = lotesPendentes[0];
+    
+    if (lote.status === 'processando') {
+      logger.info(`📋 Continuando lote em processamento: ${lote.nome}`);
+      logger.info(`   (${totalLotesPendentes - 1} lote(s) aguardando na fila)`);
+    } else {
+      logger.info(`📋 Iniciando novo lote: ${lote.nome}`);
+      logger.info(`   (${totalLotesPendentes} pendente(s) no total)`);
+    }
 
     let totalFotos = 0;
     let totalSucesso = 0;
     let totalFalha = 0;
     let lotesProcessados = 0;
-
-    // Processar cada lote
-    for (const lote of lotesPendentes) {
-      try {
-        const resultado = await processarLote(lote);
-        
-        if (resultado.concluido) {
-          lotesProcessados++;
-        }
-        
-        totalFotos += resultado.totalFotos;
-        totalSucesso += resultado.sucesso;
-        totalFalha += resultado.falha;
-
-      } catch (error) {
-        logger.error(`Erro ao processar lote ${lote.nome}, continuando...`);
+    
+    try {
+      const resultado = await processarLote(lote);
+      
+      if (resultado.concluido) {
+        lotesProcessados++;
       }
+      
+      totalFotos += resultado.totalFotos;
+      totalSucesso += resultado.sucesso;
+      totalFalha += resultado.falha;
+
+    } catch (error) {
+      logger.error(`Erro ao processar lote ${lote.nome}:`, error);
     }
 
     const tempoTotalMin = Math.floor((Date.now() - currentExecutionStart) / 1000 / 60);
     logger.info('');
     logger.info('════════════════════════════════════════════════');
-    logger.info('✅ TODOS OS LOTES PROCESSADOS');
+    logger.info('✅ LOTE PROCESSADO');
     logger.info('════════════════════════════════════════════════');
-    logger.info(`📦 Lotes: ${lotesProcessados}`);
+    logger.info(`📦 Lote processado: ${lote.nome}`);
+    logger.info(`📋 Lotes restantes: ${totalLotesPendentes - 1}`);
     logger.info(`✅ Sucesso: ${totalSucesso}`);
     logger.info(`❌ Falhas: ${totalFalha}`);
     logger.info(`⏱️  Tempo total: ${tempoTotalMin} minuto(s)`);
