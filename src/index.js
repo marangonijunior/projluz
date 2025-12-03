@@ -6,6 +6,8 @@ const { connectDatabase } = require('./config/database');
 const { verifyEmailConfig } = require('./config/email');
 const { importarTodosLotes } = require('./scripts/importLotes');
 const { processarLotesPendentes } = require('./controllers/loteProcessor');
+const { enviarRelatorioDiario } = require('./services/dailyReportService');
+const { enviarRelatorioSemanal } = require('./services/weeklyReportService');
 const logger = require('./services/logger');
 
 // Iniciar servidor HTTP para Heroku
@@ -128,14 +130,36 @@ function startScheduler() {
     process.exit(1);
   }
 
-  // Agendar execução
+  // Agendar execução de processamento (a cada 6 horas)
   cron.schedule(cronSchedule, async () => {
     logger.info('⏰ Scheduler ativado - Iniciando processamento...');
     await main();
   });
 
+  // Agendar envio de relatório diário (todo dia às 06:00)
+  cron.schedule('0 6 * * *', async () => {
+    logger.info('📧 Scheduler de relatório diário ativado...');
+    try {
+      await enviarRelatorioDiario();
+    } catch (error) {
+      logger.error('Erro ao enviar relatório diário:', error);
+    }
+  });
+
+  // Agendar envio de relatório semanal (toda sexta-feira às 15:00)
+  cron.schedule('0 15 * * 5', async () => {
+    logger.info('📧 Scheduler de relatório semanal ativado...');
+    try {
+      await enviarRelatorioSemanal();
+    } catch (error) {
+      logger.error('Erro ao enviar relatório semanal:', error);
+    }
+  });
+
   logger.info('✅ Scheduler ativo e aguardando próxima execução');
-  logger.info('⏰ Próximas execuções: 00:00, 06:00, 12:00, 18:00');
+  logger.info('⏰ Processamento: 00:00, 06:00, 12:00, 18:00');
+  logger.info('📧 Relatório diário: 06:00 (para contact@marangonijunior.co.uk)');
+  logger.info('📧 Relatório semanal: Sexta 15:00 (para EMAIL_TO)');
   logger.info('ℹ️  Não será executado imediatamente - apenas nos horários programados');
   logger.info('');
 }
