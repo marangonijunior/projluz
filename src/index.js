@@ -209,7 +209,7 @@ app.use((req, res) => {
 });
 
 // Iniciar servidor HTTP
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info('');
   logger.info('╔════════════════════════════════════════════════╗');
   logger.info('║    PROJLUZ v2.0 - PROCESSAMENTO AUTOMÁTICO    ║');
@@ -217,6 +217,16 @@ app.listen(PORT, () => {
   logger.info('╚════════════════════════════════════════════════╝');
   logger.info('');
   logger.info(`🌐 Servidor HTTP rodando na porta ${PORT}`);
+  
+  // Conectar ao MongoDB antes de iniciar scheduler e rotas
+  try {
+    logger.info('📦 Conectando ao MongoDB...');
+    await connectDatabase();
+    logger.info('✅ MongoDB conectado - API pronta para receber requisições');
+  } catch (error) {
+    logger.error('❌ Erro ao conectar MongoDB:', error);
+    logger.error('⚠️  API funcionará parcialmente sem banco de dados');
+  }
   
   // Iniciar scheduler após servidor estar pronto
   startScheduler();
