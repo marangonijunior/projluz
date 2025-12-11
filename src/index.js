@@ -112,13 +112,13 @@ async function main() {
  * Configurar e iniciar scheduler
  */
 function startScheduler() {
-  // A cada 6 horas: 0 */6 * * *
-  const cronSchedule = process.env.CRON_SCHEDULE || '0 */6 * * *';
+  // A cada 4 horas: 0 */4 * * *
+  const cronSchedule = process.env.CRON_SCHEDULE || '0 */4 * * *';
 
   logger.info('');
   logger.info('════════════════════════════════════════════════');
   logger.info('⏰ Scheduler configurado');
-  logger.info(`📅 Padrão CRON: ${cronSchedule} (a cada 6 horas)`);
+  logger.info(`📅 Padrão CRON: ${cronSchedule} (a cada 4 horas)`);
   logger.info('════════════════════════════════════════════════');
   logger.info('');
 
@@ -157,7 +157,7 @@ function startScheduler() {
   });
 
   logger.info('✅ Scheduler ativo e aguardando próxima execução');
-  logger.info('⏰ Processamento: 00:00, 06:00, 12:00, 18:00');
+  logger.info('⏰ Processamento: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00');
   logger.info('📧 Relatório diário: 06:00 (para contact@marangonijunior.co.uk)');
   logger.info('📧 Relatório semanal: Sexta 15:00 (para EMAIL_TO)');
   logger.info('ℹ️  Não será executado imediatamente - apenas nos horários programados');
@@ -200,7 +200,7 @@ app.get('/', (req, res) => {
     nome: 'ProjLuz v2.0 - Processamento Automático',
     versao: '2.0.0',
     status: isProcessing ? 'processando' : 'aguardando',
-    cronSchedule: process.env.CRON_SCHEDULE || '0 */6 * * *',
+    cronSchedule: process.env.CRON_SCHEDULE || '0 */4 * * *',
     endpoints: {
       lotes: '/api/lotes',
       estatisticas: '/api/estatisticas',
