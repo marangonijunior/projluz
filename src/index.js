@@ -251,6 +251,8 @@ app.listen(PORT, async () => {
     logger.error('❌ Erro ao conectar MongoDB:', error);
     logger.error('⚠️  API funcionará parcialmente sem banco de dados');
   }
+
+  await main();
   
   // Iniciar scheduler após servidor estar pronto
   startScheduler();
