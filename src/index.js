@@ -252,8 +252,9 @@ app.listen(PORT, async () => {
     logger.error('⚠️  API funcionará parcialmente sem banco de dados');
   }
 
+  // Executar processamento inicial ao iniciar servidor
   await main();
-  
+
   // Iniciar scheduler após servidor estar pronto
   startScheduler();
 });
