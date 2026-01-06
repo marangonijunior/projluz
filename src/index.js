@@ -253,7 +253,7 @@ app.listen(PORT, async () => {
   }
 
   // Executar processamento inicial ao iniciar servidor
-  await main();
+  //await main();
 
   // Iniciar scheduler após servidor estar pronto
   startScheduler();

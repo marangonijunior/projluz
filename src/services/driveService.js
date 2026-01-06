@@ -1,8 +1,9 @@
 const axios = require('axios');
 const { google } = require('googleapis');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 
-const FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID;
+const FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.FOLDER_ID;
 
 /**
  * Cria e retorna uma instância do Google Drive API
@@ -203,6 +204,22 @@ async function findFile(fileName) {
     throw error;
   }
 }
+/**
+ * Calcula hash SHA256 de um arquivo do Google Drive
+ * @param {string} fileId - ID do arquivo no Drive
+ * @returns {Promise<string>} - Hash SHA256 em hexadecimal
+ */
+async function calcularHashArquivo(fileId) {
+  try {
+    const buffer = await downloadFile(fileId);
+    const hash = crypto.createHash('sha256');
+    hash.update(buffer);
+    return hash.digest('hex');
+  } catch (error) {
+    logger.error(`Erro ao calcular hash do arquivo ${fileId}:`, error);
+    throw error;
+  }
+}
 
 module.exports = {
   listCsvFiles,
@@ -210,5 +227,6 @@ module.exports = {
   downloadFile,
   downloadImageFromUrl,
   uploadFile,
-  findFile
+  findFile,
+  calcularHashArquivo
 };

@@ -1,93 +1,19 @@
+require('dotenv').config();
 const crypto = require('crypto');
-const { google } = require('googleapis');
 const xlsx = require('xlsx');
 const Lote = require('../models/Lote');
 const Foto = require('../models/Foto');
 const { connectDatabase } = require('../config/database');
 const logger = require('../services/logger');
 
-// Configurar Google Drive API
-const auth = new google.auth.GoogleAuth({
-  credentials: {
-    type: process.env.GOOGLE_TYPE,
-    project_id: process.env.GOOGLE_PROJECT_ID,
-    private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
-    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    client_id: process.env.GOOGLE_CLIENT_ID,
-    auth_uri: process.env.GOOGLE_AUTH_URI,
-    token_uri: process.env.GOOGLE_TOKEN_URI,
-    auth_provider_x509_cert_url: process.env.GOOGLE_AUTH_PROVIDER_CERT_URL,
-    client_x509_cert_url: process.env.GOOGLE_CLIENT_CERT_URL
-  },
-  scopes: ['https://www.googleapis.com/auth/drive.readonly']
-});
-
-const drive = google.drive({ version: 'v3', auth });
+// Usar serviço híbrido (Planilhas Drive + Fotos FTP)
+const hybridStorage = require('../services/hybridStorageService');
 
 /**
  * Calcula hash SHA256 de uma string
  */
 function calcularHash(conteudo) {
   return crypto.createHash('sha256').update(conteudo).digest('hex');
-}
-
-/**
- * Baixa e calcula hash de um arquivo do Google Drive
- */
-async function calcularHashArquivo(fileId) {
-  try {
-    const response = await drive.files.get({
-      fileId: fileId,
-      alt: 'media'
-    }, { responseType: 'stream' });
-    
-    return new Promise((resolve, reject) => {
-      const hash = crypto.createHash('sha256');
-      response.data
-        .on('data', chunk => hash.update(chunk))
-        .on('end', () => resolve(hash.digest('hex')))
-        .on('error', reject);
-    });
-  } catch (error) {
-    logger.error(`Erro ao calcular hash do arquivo ${fileId}:`, error);
-    throw error;
-  }
-}
-
-/**
- * Lista arquivos CSV e XLSX no folder do Google Drive
- */
-async function listarCsvsDrive(folderId) {
-  try {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and (mimeType='text/csv' or mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed=false`,
-      fields: 'files(id, name, size, modifiedTime)',
-      orderBy: 'modifiedTime desc'
-    });
-    
-    return response.data.files;
-  } catch (error) {
-    logger.error('Erro ao listar arquivos do Drive:', error);
-    throw error;
-  }
-}
-
-/**
- * Baixa conteúdo de um arquivo do Drive
- */
-async function baixarArquivoDrive(fileId) {
-  try {
-    const response = await drive.files.get({
-      fileId: fileId,
-      alt: 'media'
-    }, { responseType: 'arraybuffer' });
-    
-    return Buffer.from(response.data);
-  } catch (error) {
-    logger.error(`Erro ao baixar arquivo ${fileId}:`, error);
-    throw error;
-  }
 }
 
 /**
@@ -113,15 +39,18 @@ function parseArquivo(buffer, fileName) {
 }
 
 /**
- * Importa um lote do Google Drive
+ * Importa um lote do storage híbrido
+ * - Planilha vem do Google Drive
+ * - Fotos vêm do FTP (usando caminho completo da coluna link_foto_plaqueta)
  */
 async function importarLote(fileId, fileName) {
   const inicioImport = Date.now();
-  logger.info(`Iniciando importação do lote: ${fileName}`);
+  logger.info(`Iniciando importação do lote: ${fileName} (HÍBRIDO: Drive+FTP)`);
   
   try {
-    // Calcular hash do arquivo
-    const hashArquivo = await calcularHashArquivo(fileId);
+    // Calcular hash do arquivo da planilha (Google Drive)
+    const hashArquivo = await hybridStorage.calcularHashPlanilha(fileId);
+    logger.debug(`Hash do arquivo: ${hashArquivo.substring(0, 16)}...`);
     
     // Verificar se já existe lote com este hash
     const loteExistente = await Lote.findOne({ hashArquivo });
@@ -134,8 +63,8 @@ async function importarLote(fileId, fileName) {
       };
     }
     
-    // Baixar e parsear arquivo (CSV ou XLSX)
-    const bufferArquivo = await baixarArquivoDrive(fileId);
+    // Baixar e parsear arquivo (CSV ou XLSX) do Google Drive
+    const bufferArquivo = await hybridStorage.baixarPlanilhaDrive(fileId);
     const dadosArquivo = parseArquivo(bufferArquivo, fileName);
     
     if (dadosArquivo.length === 0) {
@@ -149,6 +78,7 @@ async function importarLote(fileId, fileName) {
       driveFileId: fileId,
       driveFileName: fileName,
       hashArquivo,
+      storageType: 'hybrid', // Planilhas Drive + Fotos FTP
       totalFotos: dadosArquivo.length,
       fotosImportadas: 0,
       fotosPendentes: dadosArquivo.length,
@@ -163,62 +93,72 @@ async function importarLote(fileId, fileName) {
     const BATCH_SIZE = 100;
     let fotosImportadas = 0;
     let fotosDuplicadas = 0;
+    const fotosNaoEncontradas = []; // Rastrear imagens não encontradas no FTP
     
     for (let i = 0; i < dadosArquivo.length; i += BATCH_SIZE) {
       const batch = dadosArquivo.slice(i, i + BATCH_SIZE);
       const fotos = [];
       
       for (const linha of batch) {
-        const idPrisma = linha.id_prisma || linha.idPrisma || '';
-        const linkFoto = linha.link_foto_plaqueta || linha.linkFotoPlaqueta || '';
+        // Aceitar múltiplos nomes de colunas
+        const idPrisma = linha.cid || linha.id_prisma || linha.idPrisma || '';
+        const linkFotoOriginal = linha.link_foto || linha.link_foto_plaqueta || linha.linkFotoPlaqueta || linha.link_ftp || '';
         
-        if (!idPrisma || !linkFoto) {
-          logger.warn(`Linha inválida ignorada: ${JSON.stringify(linha)}`);
+        if (!idPrisma || !linkFotoOriginal) {
+          logger.warn(`Linha com dados incompletos: idPrisma=${idPrisma}, linkFoto=${linkFotoOriginal}`);
           continue;
         }
         
-        // Calcular hash da foto (URL + ID)
-        const hashFoto = calcularHash(`${idPrisma}:${linkFoto}`);
+        // Normalizar link (remover domínio se for URL)
+        // "https://prisma-ftp.perfilrk.com.br/45_ROCHA_MIRANDA/IMG.jpg" → "45_ROCHA_MIRANDA/IMG.jpg"
+        const linkFotoNormalizado = hybridStorage.normalizarLinkFoto(linkFotoOriginal);
         
-        // Verificar duplicidade
+        // Hash único da foto (usar link normalizado para detectar duplicatas)
+        const hashFoto = calcularHash(`${idPrisma}:${linkFotoNormalizado}`);
+        
+        // Verificar se foto já existe
         const fotoExistente = await Foto.findOne({ hashFoto });
         if (fotoExistente) {
           fotosDuplicadas++;
-          logger.debug(`Foto duplicada ignorada: ${idPrisma}`);
+          logger.debug(`Foto duplicada: ${linkFotoNormalizado} (lote: ${fotoExistente.lote})`);
           continue;
         }
         
-        fotos.push({
-          loteId: lote._id,
-          loteNome: nomeLote,
-          idPrisma,
-          linkFotoOriginal: linkFoto,
-          hashFoto,
-          status: 'pendente'
-        });
-      }
-      
-      if (fotos.length > 0) {
-        try {
-          await Foto.insertMany(fotos, { ordered: false });
-          fotosImportadas += fotos.length;
-        } catch (error) {
-          // Se houver erro de duplicata, contar quantas foram inseridas
-          if (error.code === 11000 && error.writeErrors) {
-            const inseridas = fotos.length - error.writeErrors.length;
-            fotosImportadas += inseridas;
-            fotosDuplicadas += error.writeErrors.length;
-            logger.debug(`Batch ${i / BATCH_SIZE + 1}: ${inseridas} inseridas, ${error.writeErrors.length} duplicadas`);
-          } else {
-            throw error;
-          }
+        // Buscar foto no FTP (função já normaliza internamente)
+        const caminhoFTP = await hybridStorage.buscarFotoFtp(linkFotoOriginal);
+        
+        if (!caminhoFTP) {
+          // NÃO TRAVAR - apenas registrar e continuar
+          logger.warn(`Foto não encontrada no FTP: ${linkFotoNormalizado}`);
+          fotosNaoEncontradas.push({
+            cid: idPrisma,
+            linkOriginal: linkFotoOriginal,
+            linkNormalizado: linkFotoNormalizado
+          });
+          continue;
         }
         
-        // Atualizar progresso do lote
+        // Criar registro da foto APENAS se encontrada no FTP
+        const foto = new Foto({
+          idPrisma: String(idPrisma),
+          linkFoto: linkFotoNormalizado, // Salvar link normalizado
+          ftpPath: caminhoFTP, // Caminho completo no FTP
+          hashFoto,
+          lote: lote._id,
+          status: 'pendente'
+        });
+        
+        fotos.push(foto);
+        fotosImportadas++;
+      }
+      
+      // Salvar batch de fotos
+      if (fotos.length > 0) {
+        await Foto.insertMany(fotos);
         lote.fotosImportadas = fotosImportadas;
         await lote.save();
         
-        logger.info(`Batch ${i / BATCH_SIZE + 1}: ${fotos.length} fotos processadas`);
+        logger.info(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${fotos.length} fotos processadas`);
       }
     }
     
@@ -235,12 +175,27 @@ async function importarLote(fileId, fileName) {
       });
     }
     
+    if (fotosNaoEncontradas.length > 0) {
+      lote.erros.push({
+        mensagem: `${fotosNaoEncontradas.length} fotos não encontradas no FTP`,
+        tipo: 'aviso'
+      });
+    }
+    
     await lote.save();
     
     const tempoTotal = Date.now() - inicioImport;
     logger.info(`Lote ${nomeLote} importado com sucesso!`);
     logger.info(`Total: ${fotosImportadas} fotos em ${(tempoTotal / 1000).toFixed(2)}s`);
     logger.info(`Duplicadas: ${fotosDuplicadas}`);
+    logger.info(`Não encontradas no FTP: ${fotosNaoEncontradas.length}`);
+    
+    if (fotosNaoEncontradas.length > 0) {
+      logger.warn('Primeiras 10 fotos não encontradas:');
+      fotosNaoEncontradas.slice(0, 10).forEach(f => {
+        logger.warn(`  CID: ${f.cid} | Link: ${f.linkOriginal}`);
+      });
+    }
     
     return {
       sucesso: true,
@@ -249,8 +204,10 @@ async function importarLote(fileId, fileName) {
         nome: lote.nome,
         totalFotos: lote.totalFotos,
         fotosImportadas: lote.fotosImportadas,
-        duplicadas: fotosDuplicadas
+        duplicadas: fotosDuplicadas,
+        naoEncontradas: fotosNaoEncontradas.length
       },
+      fotosNaoEncontradas: fotosNaoEncontradas, // Lista completa para o email
       tempoImportacao: tempoTotal
     };
     
@@ -261,21 +218,23 @@ async function importarLote(fileId, fileName) {
 }
 
 /**
- * Importa todos os arquivos (CSV/XLSX) de uma pasta do Drive
+ * Importa todos os lotes do Google Drive (filtrados >= 50)
  */
 async function importarTodosLotes(folderId = null) {
-  logger.info('Iniciando importação de lotes...');
+  logger.info('Iniciando importação de lotes (HÍBRIDO: Drive+FTP)...');
   
   try {
     const folder = folderId || process.env.FOLDER_ID;
     if (!folder) {
-      throw new Error('FOLDER_ID não definido');
+      throw new Error('FOLDER_ID não definido no .env');
     }
 
-    const arquivos = await listarCsvsDrive(folder);
-    logger.info(`Encontrados ${arquivos.length} arquivo(s)`);
+    // Listar planilhas do Drive (filtradas >= lote_100)
+    const arquivos = await hybridStorage.listarPlanilhasDrive(folder);
+    logger.info(`Encontrados ${arquivos.length} arquivo(s) válidos (>= lote_100)`);
     
     if (arquivos.length === 0) {
+      logger.warn('Nenhum arquivo encontrado para importar');
       return {
         sucesso: 0,
         duplicados: 0,
@@ -337,21 +296,20 @@ if (require.main === module) {
     try {
       await connectDatabase();
       
-      const folderId = process.env.FOLDER_ID;
-      if (!folderId) {
+      // Verificar conexão híbrida
+      await hybridStorage.verificarConexaoHibrida();
+      
+      const folder = process.env.FOLDER_ID;
+      if (!folder) {
         throw new Error('FOLDER_ID não definido no .env');
       }
       
-      const resultados = await importarTodosLotes(folderId);
+      const resultados = await importarTodosLotes(folder);
       
       console.log('\n=== RESUMO DA IMPORTAÇÃO ===');
-      resultados.forEach(r => {
-        if (r.sucesso) {
-          console.log(`✓ ${r.lote.nome}: ${r.lote.totalFotos} fotos`);
-        } else {
-          console.log(`✗ ${r.arquivo || r.loteExistente}: ${r.motivo || r.erro}`);
-        }
-      });
+      console.log(`✅ Sucessos: ${resultados.sucesso}`);
+      console.log(`⏭️  Duplicados: ${resultados.duplicados}`);
+      console.log(`❌ Erros: ${resultados.erros}`);
       
       process.exit(0);
     } catch (error) {
@@ -363,6 +321,5 @@ if (require.main === module) {
 
 module.exports = {
   importarLote,
-  importarTodosLotes,
-  listarCsvsDrive
+  importarTodosLotes
 };

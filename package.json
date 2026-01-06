@@ -24,6 +24,7 @@
   "dependencies": {
     "aws-sdk": "^2.1691.0",
     "axios": "^1.6.2",
+    "basic-ftp": "^5.0.5",
     "cors": "^2.8.5",
     "csv-parser": "^3.0.0",
     "csv-writer": "^1.6.0",

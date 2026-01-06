@@ -40,6 +40,31 @@ function generateEmailHtml(stats) {
   const exportUrl = `${API_BASE_URL}/api/lotes/${nomeLote}/export`;
   const statusUrl = `${API_BASE_URL}/api/lotes/${nomeLote}/status`;
   const fotosUrl = `${API_BASE_URL}/api/lotes/${nomeLote}/fotos`;
+  
+  // Seção de imagens não encontradas (se houver)
+  const notFoundSection = stats.notFoundImages && stats.notFoundImages.length > 0 ? `
+    <div class="stats" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+      <h3 style="color: #856404;">⚠️ Imagens Não Encontradas no FTP (${stats.notFoundImages.length})</h3>
+      <p style="margin: 10px 0; color: #856404;">
+        As imagens abaixo estão listadas no Excel mas não foram encontradas no servidor FTP.
+        Elas <strong>NÃO foram importadas</strong> para o banco de dados.
+      </p>
+      <div style="max-height: 400px; overflow-y: auto; background: white; padding: 15px; border-radius: 5px; margin-top: 15px;">
+        ${stats.notFoundImages.map((img, index) => `
+          <div style="padding: 10px; border-bottom: 1px solid #eee; ${index >= 50 ? 'display: none;' : ''}">
+            <strong>CID:</strong> ${img.cid}<br>
+            <strong>Link:</strong> <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-size: 11px; word-break: break-all;">${img.linkOriginal}</code><br>
+            <strong>Normalizado:</strong> <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-size: 11px;">${img.linkNormalizado}</code>
+          </div>
+        `).join('')}
+        ${stats.notFoundImages.length > 50 ? `
+          <div style="padding: 15px; text-align: center; color: #856404;">
+            <em>... e mais ${stats.notFoundImages.length - 50} imagens não encontradas</em>
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  ` : '';
 
   return `
 <!DOCTYPE html>
@@ -245,6 +270,8 @@ function generateEmailHtml(stats) {
       Use os links acima para acessar os resultados diretamente pela API REST. 
       O arquivo CSV pode ser baixado clicando no botão "Baixar CSV Completo" acima.
     </div>
+
+    ${notFoundSection}
   </div>
 
   <div class="footer">
