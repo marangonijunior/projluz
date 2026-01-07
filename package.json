@@ -7,7 +7,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "api": "node src/api/server.js",
-    "import": "node src/scripts/importLotes.js",
+    "import": "node src/scripts/importarLoteHTTP.js",
     "list": "node src/scripts/listFiles.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
