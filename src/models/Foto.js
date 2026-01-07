@@ -25,6 +25,7 @@ const FotoSchema = new mongoose.Schema({
     required: true
   },
   driveFileId: String,
+  ftpPath: String, // Caminho da foto no FTP (sistema híbrido)
   
   // Controle de Duplicidade
   hashFoto: {

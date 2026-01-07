@@ -141,10 +141,11 @@ async function importarLote(fileId, fileName) {
         // Criar registro da foto APENAS se encontrada no FTP
         const foto = new Foto({
           idPrisma: String(idPrisma),
-          linkFoto: linkFotoNormalizado, // Salvar link normalizado
+          linkFotoOriginal: linkFotoOriginal, // Link original do Excel
           ftpPath: caminhoFTP, // Caminho completo no FTP
           hashFoto,
-          lote: lote._id,
+          loteId: lote._id,
+          loteNome: lote.nome,
           status: 'pendente'
         });
         

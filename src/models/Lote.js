@@ -83,6 +83,13 @@ const LoteSchema = new mongoose.Schema({
   },
   tamanhoArquivo: Number, // bytes
   
+  // Sistema híbrido (Drive + FTP)
+  storageType: {
+    type: String,
+    enum: ['drive', 'ftp', 'hybrid'],
+    default: 'hybrid'
+  },
+  
   // Auditoria
   erros: [{
     timestamp: {
