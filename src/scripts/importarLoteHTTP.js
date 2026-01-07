@@ -119,6 +119,15 @@ async function importarLoteHTTP(nomeArquivo, fileIdExistente = null, servidorId 
     let invalidas = 0;
     let erros = 0;
 
+    // Log das primeiras linhas para debug
+    if (dados.length > 0) {
+      logger.info(`📋 Amostra das primeiras 3 linhas:`);
+      for (let i = 0; i < Math.min(3, dados.length); i++) {
+        const linha = dados[i];
+        logger.info(`  ${i + 1}. CID: ${linha.cid} | URL: "${linha.link_ftp}" | Tipo: ${typeof linha.link_ftp}`);
+      }
+    }
+
     // Processar em lotes de 100
     const batchSize = 100;
     
@@ -130,6 +139,9 @@ async function importarLoteHTTP(nomeArquivo, fileIdExistente = null, servidorId 
           
           if (!httpUrl || !httpUrl.startsWith('https://')) {
             invalidas++;
+            if (invalidas <= 5) {
+              logger.warn(`URL inválida: "${httpUrl}" (tipo: ${typeof httpUrl})`);
+            }
             return;
           }
 
@@ -140,46 +152,17 @@ async function importarLoteHTTP(nomeArquivo, fileIdExistente = null, servidorId 
             return;
           }
 
-          // Verificar se URL é válida (timeout curto)
-          let urlValida = false;
-          try {
-            await axios.head(httpUrl, { timeout: 3000 });
-            urlValida = true;
-          } catch (err) {
-            // URL inválida - salvar como erro no banco
-            const fotoComErro = new Foto({
-              driveFileId: arquivo.id,
-              lote: nomeLote,
-              httpUrl: httpUrl,
-              cid: parseInt(linha.cid) || null,
-              status: 'erro',
-              numeroDetectado: null,
-              confianca: 0,
-              observacoes: [{
-                tipo: 'erro_download',
-                mensagem: `URL inválida ou foto não encontrada: ${err.message}`,
-                timestamp: new Date()
-              }]
-            });
-            
-            await fotoComErro.save();
-            invalidas++;
-            return;
-          }
+          // Salvar diretamente como pendente (validação será no processamento)
+          const novaFoto = new Foto({
+            driveFileId: arquivo.id,
+            lote: nomeLote,
+            httpUrl: httpUrl,
+            cid: parseInt(linha.cid) || null,
+            status: 'pendente'
+          });
 
-          // Salvar no banco como pendente (URL válida)
-          if (urlValida) {
-            const novaFoto = new Foto({
-              driveFileId: arquivo.id,
-              lote: nomeLote,
-              httpUrl: httpUrl,
-              cid: parseInt(linha.cid) || null,
-              status: 'pendente'
-            });
-
-            await novaFoto.save();
-            importadas++;
-          }
+          await novaFoto.save();
+          importadas++;
 
         } catch (error) {
           erros++;
@@ -206,9 +189,9 @@ async function importarLoteHTTP(nomeArquivo, fileIdExistente = null, servidorId 
     logger.info('='.repeat(80));
     logger.info(`✅ IMPORTAÇÃO CONCLUÍDA: ${nomeLote}`);
     logger.info(`   Total no arquivo: ${resultado.total}`);
-    logger.info(`   ✅ Importadas: ${resultado.importadas}`);
+    logger.info(`   ✅ Importadas: ${resultado.importadas} (prontas para processar)`);
     logger.info(`   ⚠️  Duplicadas: ${resultado.duplicadas}`);
-    logger.info(`   ❌ Inválidas: ${resultado.invalidas}`);
+    logger.info(`   ❌ Inválidas: ${resultado.invalidas} (URL sem https ou vazia)`);
     logger.info(`   🔥 Erros: ${resultado.erros}`);
     logger.info('='.repeat(80));
 
