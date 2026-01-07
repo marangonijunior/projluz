@@ -10,7 +10,7 @@ const logger = require('../utils/logger');
  * Importa um lote específico do Google Drive para o MongoDB
  * Salva apenas URLs HTTP válidas (verifica se existem antes de salvar)
  */
-async function importarLoteHTTP(nomeArquivo) {
+async function importarLoteHTTP(nomeArquivo, fileIdExistente = null, servidorId = null) {
   try {
     logger.info(`📥 Iniciando importação: ${nomeArquivo}`);
     
@@ -40,22 +40,56 @@ async function importarLoteHTTP(nomeArquivo) {
     const drive = google.drive({ version: 'v3', auth });
     logger.info('✅ Google Drive autenticado');
 
-    // Buscar arquivo no Drive
-    const folderId = process.env.FOLDER_ID;
-    const query = `name = '${nomeArquivo}' and '${folderId}' in parents and trashed = false`;
+    let arquivo;
     
-    const listResponse = await drive.files.list({
-      q: query,
-      fields: 'files(id, name, size, createdTime)',
-      orderBy: 'createdTime desc'
-    });
+    // Se já temos o fileId, usar diretamente
+    if (fileIdExistente) {
+      arquivo = { 
+        id: fileIdExistente, 
+        name: nomeArquivo,
+        size: 0 
+      };
+      logger.info(`📄 Usando arquivo com ID: ${fileIdExistente}`);
+    } else {
+      // Buscar arquivo no Drive (dentro da pasta do servidor se especificado)
+      const folderId = process.env.FOLDER_ID;
+      let query;
+      
+      if (servidorId) {
+        // Buscar primeiro a pasta do servidor
+        const folderQuery = `name = '${servidorId}' and '${folderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const folderResponse = await drive.files.list({
+          q: folderQuery,
+          fields: 'files(id)',
+          pageSize: 1
+        });
+        
+        if (!folderResponse.data.files || folderResponse.data.files.length === 0) {
+          logger.error(`❌ Pasta ${servidorId} não encontrada`);
+          return { success: false, message: `Pasta ${servidorId} não encontrada` };
+        }
+        
+        const servidorFolderId = folderResponse.data.files[0].id;
+        query = `name = '${nomeArquivo}' and '${servidorFolderId}' in parents and trashed = false`;
+      } else {
+        // Buscar na pasta raiz
+        query = `name = '${nomeArquivo}' and '${folderId}' in parents and trashed = false`;
+      }
+      
+      const listResponse = await drive.files.list({
+        q: query,
+        fields: 'files(id, name, size, createdTime)',
+        orderBy: 'createdTime desc'
+      });
 
-    if (!listResponse.data.files || listResponse.data.files.length === 0) {
-      logger.error(`❌ Arquivo não encontrado: ${nomeArquivo}`);
-      return { success: false, message: 'Arquivo não encontrado' };
+      if (!listResponse.data.files || listResponse.data.files.length === 0) {
+        logger.error(`❌ Arquivo não encontrado: ${nomeArquivo}`);
+        return { success: false, message: 'Arquivo não encontrado' };
+      }
+
+      arquivo = listResponse.data.files[0];
     }
-
-    const arquivo = listResponse.data.files[0];
+    
     logger.info(`📄 Arquivo encontrado: ${arquivo.name} (${(arquivo.size / 1024).toFixed(1)}KB)`);
 
     // Baixar arquivo

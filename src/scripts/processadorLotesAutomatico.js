@@ -116,7 +116,11 @@ class ProcessadorLotesAutomatico {
       
       if (!fotoExistente) {
         logger.info(`✅ Próximo lote encontrado: ${arquivo.name}`);
-        return arquivo;
+        // Retornar arquivo com informações adicionais
+        return {
+          ...arquivo,
+          servidorId: process.env.SERVIDOR_ID || 'servidor_A'
+        };
       } else {
         logger.info(`⏭️  Lote ${nomeLote} já importado (pulando)`);
       }
@@ -158,7 +162,11 @@ class ProcessadorLotesAutomatico {
       logger.info('📥 FASE 1: IMPORTAÇÃO');
       logger.info('-'.repeat(80));
       
-      const resultadoImport = await importarLoteHTTP(proximoLote.name);
+      const resultadoImport = await importarLoteHTTP(
+        proximoLote.name, 
+        proximoLote.id,
+        proximoLote.servidorId
+      );
       
       if (!resultadoImport.success) {
         logger.error('❌ Falha na importação, abortando ciclo');
