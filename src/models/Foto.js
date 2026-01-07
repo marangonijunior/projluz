@@ -1,31 +1,30 @@
 const mongoose = require('mongoose');
 
 const FotoSchema = new mongoose.Schema({
-  // Relacionamento
+  // Relacionamento (opcional para novos lotes HTTP)
   loteId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lote',
-    required: true,
     index: true
   },
-  loteNome: {
+  lote: {
     type: String,
-    required: true,
-    index: true
+    index: true // Nome do lote (ex: "Lote_01")
   },
   
   // Identificação
   idPrisma: {
     type: String,
-    required: true,
     index: true
   },
-  linkFotoOriginal: {
-    type: String,
-    required: true
+  cid: {
+    type: Number,
+    index: true
   },
+  linkFotoOriginal: String,
   driveFileId: String,
   ftpPath: String, // Caminho da foto no FTP (sistema híbrido)
+  httpUrl: String, // URL HTTP da foto (servidor web)
   
   // Controle de Duplicidade
   hashFoto: {
@@ -38,7 +37,7 @@ const FotoSchema = new mongoose.Schema({
   // Status
   status: {
     type: String,
-    enum: ['pendente', 'processando', 'sucesso', 'falha', 'ignorada', 'warning'],
+    enum: ['pendente', 'processando', 'sucesso', 'falha', 'ignorada', 'warning', 'erro'],
     default: 'pendente',
     index: true
   },
@@ -101,6 +100,15 @@ const FotoSchema = new mongoose.Schema({
     tipo: String // 'download', 'aws', 'validacao'
   },
   
+  observacoes: [{
+    tipo: String, // 'erro_download', 'erro_processamento', 'url_invalida', etc
+    mensagem: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  
   historicoErros: [{
     tentativa: Number,
     mensagem: String,
@@ -124,9 +132,10 @@ const FotoSchema = new mongoose.Schema({
 
 // Índices compostos
 FotoSchema.index({ loteId: 1, status: 1 });
-FotoSchema.index({ loteId: 1, idPrisma: 1 }, { unique: true });
+FotoSchema.index({ lote: 1, status: 1 }); // Para novos lotes HTTP
+FotoSchema.index({ httpUrl: 1 }, { unique: true, sparse: true }); // Unicidade por URL
 FotoSchema.index({ status: 1, dataImportacao: 1 });
-FotoSchema.index({ loteNome: 1, numeroEncontrado: 1 });
+FotoSchema.index({ lote: 1, numeroEncontrado: 1 });
 
 // Métodos de instância
 FotoSchema.methods.iniciarProcessamento = function() {

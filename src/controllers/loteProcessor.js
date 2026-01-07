@@ -1,7 +1,6 @@
 const Lote = require('../models/Lote');
 const Foto = require('../models/Foto');
-const { downloadFile } = require('../services/driveService');
-const { baixarArquivoBuffer } = require('../services/ftpService');
+const { baixarArquivoHTTP } = require('../services/httpService');
 const { extractNumberFromImage } = require('../services/rekognitionService');
 const { sendSummaryEmail } = require('../services/emailService');
 const logger = require('../services/logger');
@@ -46,14 +45,6 @@ async function resetarFotosTravadas(loteId) {
 }
 
 /**
- * Extrai file_id da URL do Google Drive
- */
-function extractFileId(url) {
-  const matches = url.match(/[-\w]{25,}/);
-  return matches ? matches[0] : null;
-}
-
-/**
  * Processa uma única foto
  */
 async function processarFoto(foto) {
@@ -62,23 +53,36 @@ async function processarFoto(foto) {
   try {
     let imageBuffer;
     
-    // Verificar se foto vem do FTP ou Drive
-    if (foto.ftpPath) {
-      // Download do FTP
-      logger.debug(`📥 Baixando foto do FTP: ${foto.idPrisma} - ${foto.ftpPath}`);
-      imageBuffer = await baixarArquivoBuffer(foto.ftpPath);
-    } else {
-      // Download do Drive (legado)
-      const fileId = extractFileId(foto.linkFotoOriginal);
-      if (!fileId) {
-        throw new Error('URL inválida - não foi possível extrair file_id');
-      }
-      logger.debug(`📥 Baixando foto do Drive: ${foto.idPrisma}`);
-      imageBuffer = await downloadFile(fileId);
+    // Download via HTTP apenas
+    if (!foto.httpUrl) {
+      throw new Error('Foto sem URL HTTP configurada');
+    }
+    
+    logger.debug(`📥 Baixando foto via HTTP: ${foto._id}`);
+    try {
+      imageBuffer = await baixarArquivoHTTP(foto.httpUrl);
+    } catch (error) {
+      // Erro no download - marcar como erro e pular
+      foto.status = 'erro';
+      foto.observacoes = foto.observacoes || [];
+      foto.observacoes.push({
+        tipo: 'erro_download_http',
+        mensagem: `Falha ao baixar: ${error.message}`,
+        timestamp: new Date()
+      });
+      await foto.save();
+      
+      logger.error(`❌ Erro ao baixar foto ${foto._id}: ${error.message}`);
+      return {
+        numeroDetectado: null,
+        confianca: 0,
+        tempoProcessamento: Date.now() - inicio,
+        erro: error.message
+      };
     }
 
     // Analisar com AWS Rekognition
-    logger.debug(`🔍 Analisando foto: ${foto.idPrisma}`);
+    logger.debug(`🔍 Analisando foto: ${foto._id}`);
     const resultado = await extractNumberFromImage(imageBuffer);
 
     // Atualizar foto com resultado
@@ -378,8 +382,97 @@ async function processarLotesPendentes() {
   }
 }
 
+/**
+ * Processa todas as fotos pendentes de um lote específico (identificado por nome do lote)
+ * Usado pelo processador automático
+ */
+async function processarLotePendente(nomeLote) {
+  try {
+    logger.info(`🔍 Processando lote: ${nomeLote}`);
+    
+    // Buscar fotos pendentes desse lote
+    const fotosPendentes = await Foto.find({
+      lote: nomeLote,
+      status: 'pendente'
+    });
+
+    if (fotosPendentes.length === 0) {
+      logger.info('✅ Nenhuma foto pendente neste lote');
+      return { processadas: 0, sucesso: 0, falhas: 0, erros: 0 };
+    }
+
+    logger.info(`📊 ${fotosPendentes.length} foto(s) pendente(s)`);
+
+    let processadas = 0;
+    let sucesso = 0;
+    let falhas = 0;
+    let erros = 0;
+
+    // Processar foto por foto
+    for (const foto of fotosPendentes) {
+      try {
+        // Marcar como processando
+        foto.status = 'processando';
+        await foto.save();
+
+        // Processar
+        const resultado = await processarFoto(foto);
+        
+        processadas++;
+        
+        if (resultado.erro) {
+          // Já foi marcada como erro dentro do processarFoto
+          erros++;
+          logger.error(`❌ [${processadas}/${fotosPendentes.length}] Erro no download`);
+        } else if (resultado.numeroDetectado) {
+          sucesso++;
+          logger.info(`✅ [${processadas}/${fotosPendentes.length}] Número: ${resultado.numeroDetectado}`);
+        } else {
+          falhas++;
+          logger.warn(`⚠️  [${processadas}/${fotosPendentes.length}] Número não detectado`);
+        }
+
+      } catch (error) {
+        falhas++;
+        logger.error(`❌ [${processadas + 1}/${fotosPendentes.length}] Erro:`, error.message);
+        
+        // Marcar como falha
+        foto.status = 'falha';
+        foto.observacoes = foto.observacoes || [];
+        foto.observacoes.push({
+          tipo: 'erro_processamento',
+          mensagem: error.message,
+          timestamp: new Date()
+        });
+        await foto.save();
+      }
+
+      // Log de progresso a cada 100 fotos
+      if (processadas % 100 === 0) {
+        logger.info(`📊 Progresso: ${processadas}/${fotosPendentes.length} (${sucesso} sucesso, ${falhas} falhas, ${erros} erros)`);
+      }
+    }
+
+    logger.info('');
+    logger.info('='.repeat(80));
+    logger.info(`✅ Lote ${nomeLote} concluído`);
+    logger.info(`   Total: ${processadas}`);
+    logger.info(`   Sucesso: ${sucesso}`);
+    logger.info(`   Falhas: ${falhas}`);
+    logger.info(`   Erros: ${erros}`);
+    logger.info('='.repeat(80));
+
+    return { processadas, sucesso, falhas, erros };
+
+  } catch (error) {
+    logger.error('Erro ao processar lote pendente:', error);
+    throw error;
+  }
+}
+
 module.exports = {
   processarLote,
   processarLotesPendentes,
-  processarFoto
+  processarFoto,
+  processarLotePendente
 };
