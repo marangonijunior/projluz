@@ -175,6 +175,9 @@ class ProcessadorLotesAutomatico {
 
       this.ultimoLoteProcessado = resultadoImport.lote;
 
+      // Reconectar MongoDB (importação desconectou)
+      await mongoose.connect(process.env.MONGODB_URI);
+
       // Processar com AWS
       logger.info('');
       logger.info('🔍 FASE 2: PROCESSAMENTO AWS');
