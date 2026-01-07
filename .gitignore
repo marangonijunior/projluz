@@ -37,3 +37,11 @@ downloads/
 !assets/*.jpg
 !assets/*.jpeg
 !assets/*.png
+
+# Documentation and examples (local only)
+HEROKU_CONFIG.md
+.env.example
+
+# Test/debug scripts (local only)
+src/scripts/testar*.js
+src/scripts/debug*.js
