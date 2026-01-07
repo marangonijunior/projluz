@@ -1,6 +1,7 @@
 const Lote = require('../models/Lote');
 const Foto = require('../models/Foto');
 const { downloadFile } = require('../services/driveService');
+const { baixarArquivoBuffer } = require('../services/ftpService');
 const { extractNumberFromImage } = require('../services/rekognitionService');
 const { sendSummaryEmail } = require('../services/emailService');
 const logger = require('../services/logger');
@@ -59,15 +60,22 @@ async function processarFoto(foto) {
   const inicio = Date.now();
   
   try {
-    // Extrair file_id da URL
-    const fileId = extractFileId(foto.linkFotoOriginal);
-    if (!fileId) {
-      throw new Error('URL inválida - não foi possível extrair file_id');
+    let imageBuffer;
+    
+    // Verificar se foto vem do FTP ou Drive
+    if (foto.ftpPath) {
+      // Download do FTP
+      logger.debug(`📥 Baixando foto do FTP: ${foto.idPrisma} - ${foto.ftpPath}`);
+      imageBuffer = await baixarArquivoBuffer(foto.ftpPath);
+    } else {
+      // Download do Drive (legado)
+      const fileId = extractFileId(foto.linkFotoOriginal);
+      if (!fileId) {
+        throw new Error('URL inválida - não foi possível extrair file_id');
+      }
+      logger.debug(`📥 Baixando foto do Drive: ${foto.idPrisma}`);
+      imageBuffer = await downloadFile(fileId);
     }
-
-    // Baixar imagem do Drive
-    logger.debug(`📥 Baixando foto: ${foto.idPrisma}`);
-    const imageBuffer = await downloadFile(fileId);
 
     // Analisar com AWS Rekognition
     logger.debug(`🔍 Analisando foto: ${foto.idPrisma}`);
