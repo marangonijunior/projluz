@@ -69,11 +69,11 @@ class LoteController {
       
       // Formatar dados para CSV
       const dados = fotos.map(foto => ({
-        cid: foto.cid,
-        link_foto: foto.httpUrl,
+        id: foto.cid,
+        link_foto_plaqueta: foto.httpUrl,
         numero_encontrado: String(foto.numeroEncontrado || ''), // SEMPRE STRING para preservar zeros
         confidencialidade: foto.confidencialidade ? foto.confidencialidade.toFixed(2) : '',
-        status: foto.status
+        falhou: foto.status === 'erro' || foto.status === 'falha' ? 'true' : 'false'
       }));
       
       const csv = arrayToCsvString(dados);
