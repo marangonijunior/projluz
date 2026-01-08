@@ -462,6 +462,28 @@ async function processarLotePendente(nomeLote) {
     logger.info(`   Erros: ${erros}`);
     logger.info('='.repeat(80));
 
+    // Enviar email com resumo
+    if (processadas > 0) {
+      logger.info('');
+      logger.info('📧 Enviando email de conclusão...');
+      
+      const stats = {
+        batchName: nomeLote,
+        total: processadas,
+        success: sucesso,
+        failures: falhas + erros,
+        duration: 0, // Não temos tempo total aqui
+        timestamp: new Date().toLocaleString('pt-BR')
+      };
+
+      try {
+        await sendSummaryEmail(stats);
+        logger.info('✅ Email enviado!');
+      } catch (error) {
+        logger.error('❌ Erro ao enviar email:', error.message);
+      }
+    }
+
     return { processadas, sucesso, falhas, erros };
 
   } catch (error) {

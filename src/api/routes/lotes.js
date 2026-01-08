@@ -22,6 +22,9 @@ router.post('/:nome/processar', loteController.processar.bind(loteController));
 // Obter status do processamento em tempo real
 router.get('/:nome/status', loteController.obterStatus.bind(loteController));
 
+// Enviar email com resumo do lote
+router.post('/:nome/enviar-email', loteController.enviarEmail.bind(loteController));
+
 // Listar fotos que requerem revisão (warning)
 router.get('/:nome/warnings', loteController.listarWarnings.bind(loteController));
 

@@ -27,13 +27,17 @@ function formatDuration(seconds) {
 function generateEmailHtml(stats) {
   const successPercent = ((stats.success / stats.total) * 100).toFixed(2);
   const failurePercent = ((stats.failures / stats.total) * 100).toFixed(2);
-  const avgTime = (stats.duration / stats.total).toFixed(2);
+  const avgTime = stats.duration > 0 ? (stats.duration / stats.total).toFixed(2) : '0';
   
-  // Gera nome do lote (sem extensão)
-  const nomeLote = stats.batchName.replace(/\.(csv|xlsx)$/i, '');
+  // Extrair nome do lote (Lote_XX)
+  let nomeLote = stats.batchName;
+  const match = stats.batchName.match(/Lote[_\s]?(\d+)/i);
+  if (match) {
+    nomeLote = `Lote_${match[1].padStart(2, '0')}`;
+  }
   
   // URL base da API
-  const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
+  const API_BASE_URL = process.env.API_BASE_URL || 'https://projluz-0025ac4aa83d.herokuapp.com';
   
   // Links dos endpoints
   const loteUrl = `${API_BASE_URL}/api/lotes/${nomeLote}`;

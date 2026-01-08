@@ -58,23 +58,22 @@ class LoteController {
     try {
       const { nome } = req.params;
       
-      const lote = await Lote.findOne({ nome });
+      // Buscar fotos pelo campo 'lote' (novo sistema)
+      const fotos = await Foto.find({ lote: nome })
+        .select('cid httpUrl numeroEncontrado confidencialidade status')
+        .sort({ cid: 1 });
       
-      if (!lote) {
+      if (!fotos || fotos.length === 0) {
         return res.status(404).json({ erro: 'Lote não encontrado' });
       }
       
-      const fotos = await Foto.find({ loteId: lote._id })
-        .select('idPrisma linkFotoOriginal numeroEncontrado confidencialidade status')
-        .sort({ idPrisma: 1 });
-      
       // Formatar dados para CSV
       const dados = fotos.map(foto => ({
-        id: foto.idPrisma,
-        link_foto_plaqueta: foto.linkFotoOriginal,
+        cid: foto.cid,
+        link_foto: foto.httpUrl,
         numero_encontrado: String(foto.numeroEncontrado || ''), // SEMPRE STRING para preservar zeros
         confidencialidade: foto.confidencialidade ? foto.confidencialidade.toFixed(2) : '',
-        falhou: foto.status === 'falha' ? 'true' : 'false'
+        status: foto.status
       }));
       
       const csv = arrayToCsvString(dados);
@@ -95,23 +94,21 @@ class LoteController {
       const { nome } = req.params;
       const { status, page = 1, limit = 50 } = req.query;
       
-      const lote = await Lote.findOne({ nome });
-      
-      if (!lote) {
-        return res.status(404).json({ erro: 'Lote não encontrado' });
-      }
-      
-      const query = { loteId: lote._id };
+      const query = { lote: nome };
       if (status) query.status = status;
       
       const skip = (page - 1) * limit;
       
       const fotos = await Foto.find(query)
-        .sort({ idPrisma: 1 })
+        .sort({ cid: 1 })
         .skip(skip)
         .limit(parseInt(limit));
       
       const total = await Foto.countDocuments(query);
+      
+      if (total === 0) {
+        return res.status(404).json({ erro: 'Lote não encontrado' });
+      }
       
       res.json({
         fotos,
@@ -133,35 +130,37 @@ class LoteController {
     try {
       const { nome } = req.params;
       
-      const lote = await Lote.findOne({ nome });
+      // Verificar se o lote existe
+      const totalFotos = await Foto.countDocuments({ lote: nome });
       
-      if (!lote) {
+      if (totalFotos === 0) {
         return res.status(404).json({ erro: 'Lote não encontrado' });
       }
       
-      if (lote.status === 'processando') {
+      // Verificar se há fotos processando
+      const processando = await Foto.countDocuments({ lote: nome, status: 'processando' });
+      if (processando > 0) {
         return res.status(400).json({ erro: 'Lote já está sendo processado' });
       }
       
-      if (lote.status === 'concluido') {
-        return res.status(400).json({ erro: 'Lote já foi processado' });
+      // Verificar se há fotos pendentes
+      const pendentes = await Foto.countDocuments({ lote: nome, status: 'pendente' });
+      if (pendentes === 0) {
+        return res.status(400).json({ erro: 'Nenhuma foto pendente para processar' });
       }
       
-      // Iniciar processamento (será feito em background)
-      await lote.iniciarProcessamento();
-      
       // Disparar processamento assíncrono
-      const batchProcessor = require('../../controllers/batchProcessor');
-      batchProcessor.processLote(lote._id).catch(err => {
+      const { processarLotePendente } = require('../../controllers/loteProcessor');
+      processarLotePendente(nome).catch(err => {
         logger.error('Erro no processamento do lote:', err);
       });
       
       res.json({ 
         mensagem: 'Processamento iniciado',
         lote: {
-          nome: lote.nome,
-          status: lote.status,
-          totalFotos: lote.totalFotos
+          nome,
+          totalFotos,
+          pendentes
         }
       });
     } catch (error) {
@@ -175,11 +174,40 @@ class LoteController {
     try {
       const { nome } = req.params;
       
-      const lote = await Lote.findOne({ nome });
+      // Buscar estatísticas do lote
+      const stats = await Foto.aggregate([
+        { $match: { lote: nome } },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ]);
       
-      if (!lote) {
+      if (!stats || stats.length === 0) {
         return res.status(404).json({ erro: 'Lote não encontrado' });
       }
+      
+      // Formatar estatísticas
+      const statusMap = {};
+      let total = 0;
+      
+      stats.forEach(s => {
+        statusMap[s._id] = s.count;
+        total += s.count;
+      });
+      
+      res.json({
+        nome,
+        total,
+        pendente: statusMap.pendente || 0,
+        processando: statusMap.processando || 0,
+        sucesso: statusMap.sucesso || 0,
+        falha: statusMap.falha || 0,
+        erro: statusMap.erro || 0,
+        warning: statusMap.warning || 0
+      });
       
       const statusDetalhado = {
         nome: lote.nome,
@@ -323,6 +351,73 @@ class LoteController {
     } catch (error) {
       logger.error('Erro ao listar warnings:', error);
       res.status(500).json({ erro: 'Erro ao listar warnings', mensagem: error.message });
+    }
+  }
+
+  // POST /api/lotes/:nome/enviar-email - Enviar email com resumo do lote
+  async enviarEmail(req, res) {
+    try {
+      const { nome } = req.params;
+      
+      // Buscar estatísticas do lote
+      const stats = await Foto.aggregate([
+        { $match: { lote: nome } },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+      
+      if (!stats || stats.length === 0) {
+        return res.status(404).json({ erro: 'Lote não encontrado' });
+      }
+      
+      // Formatar estatísticas
+      const statusMap = {};
+      let total = 0;
+      
+      stats.forEach(s => {
+        statusMap[s._id] = s.count;
+        total += s.count;
+      });
+      
+      const sucesso = statusMap.sucesso || 0;
+      const falhas = (statusMap.falha || 0) + (statusMap.erro || 0);
+      
+      // Preparar dados para o email
+      const emailStats = {
+        batchName: nome,
+        total,
+        success: sucesso,
+        failures: falhas,
+        duration: 0,
+        timestamp: new Date().toLocaleString('pt-BR')
+      };
+      
+      // Enviar email
+      const { sendSummaryEmail } = require('../../services/emailService');
+      const enviado = await sendSummaryEmail(emailStats);
+      
+      if (!enviado) {
+        return res.status(500).json({ erro: 'Falha ao enviar email. Verifique as configurações (RESEND_API_KEY, EMAIL_TO)' });
+      }
+      
+      res.json({ 
+        mensagem: 'Email enviado com sucesso',
+        lote: nome,
+        estatisticas: {
+          total,
+          sucesso,
+          falhas,
+          pendente: statusMap.pendente || 0
+        }
+      });
+      
+    } catch (error) {
+      logger.error('Erro ao enviar email:', error);
+      res.status(500).json({ erro: 'Erro ao enviar email', mensagem: error.message });
     }
   }
 }
