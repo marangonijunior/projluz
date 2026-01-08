@@ -220,18 +220,17 @@ class ProcessadorLotesAutomatico {
     logger.info(`   • AWS Rekognition: Ativo`);
     logger.info('');
 
-    // Executar primeiro ciclo imediatamente
-    logger.info('🚀 Executando primeiro ciclo agora...\n');
-    await this.processarCiclo();
+    // NÃO executar no startup (apenas no cron agendado)
+    logger.info('⏸️  Aguardando próximo ciclo agendado (não executa no startup)...');
+    logger.info('⏰ Próxima execução em 3 horas');
 
-    // Agendar próximos ciclos
+    // Agendar ciclos a cada 3 horas
     setInterval(async () => {
       await this.processarCiclo();
     }, this.intervalo);
 
     logger.info('');
     logger.info('✅ Processador automático ativo');
-    logger.info('⏰ Aguardando próximo ciclo em 3 horas...');
   }
 
   /**
